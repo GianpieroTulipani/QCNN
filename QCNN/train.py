@@ -48,7 +48,7 @@ def train(
 
 	classifier = NeuralNetworkClassifier(
 		qnn,
-		optimizer=COBYLA(maxiter=2),
+		optimizer=COBYLA(maxiter=200),
 		callback=callback_graph,
 		initial_point=initial_point,
 	)
