@@ -6,8 +6,6 @@ from PIL import Image
 from loguru import logger
 from tqdm import tqdm
 
-from QCNN.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
-
 def load_data_and_process(data_dir: Path, target_size=(256, 256)):
     logger.info(f"Loading data from {data_dir}")
     data = []
@@ -39,10 +37,3 @@ def load_data_and_process(data_dir: Path, target_size=(256, 256)):
     X_test_pca = pca.transform(X_test_flat)
     
     return X_train_pca, X_test_pca, y_train, y_test
-
-
-if __name__ == "__main__":
-    data_dir = RAW_DATA_DIR / 'Brain_Data_Organised'
-    X_train, X_test, Y_train, Y_test = load_data_and_process(data_dir)
-    logger.info(f"X_train shape: {X_train.shape}, Y_train shape: {len(Y_train)}")
-    logger.info(f"X_test shape: {X_test.shape}, Y_test shape: {len(Y_test)}")

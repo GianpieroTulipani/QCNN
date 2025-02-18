@@ -40,7 +40,6 @@ def F2(params):
     qc.u(params[12], params[13], params[14], 1)
     return qc
 
-
 def P(params):
     qc = QuantumCircuit(2)
     qc.crz(params[0], 0, 1)

@@ -1,119 +1,188 @@
-from QCNN.Unitary import F1, F2, P
-import numpy as np
+from Unitary import F1, F2, P
+
 from qiskit import QuantumCircuit
+from qiskit.circuit import ParameterVector
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.primitives import StatevectorEstimator as Estimator
+from qiskit_machine_learning.neural_networks import EstimatorQNN
 
+def encoding_features(qubits):
+    num_qubits = len(qubits)
+    qc = QuantumCircuit(num_qubits)
+    feature_params = ParameterVector('x', num_qubits)
+    for i in range(num_qubits):
+        qc.h(i)
+        qc.ry(feature_params[i], i)
+    qc.barrier()
+    return qc
 
-def conv_layer(qcnn, params, F2_params, num_layer, qubits):
+def conv_layer(param_prefix, param_length, F2_params, num_layer, qubits):
+    num_qubits = len(qubits)
+    qc = QuantumCircuit(num_qubits, name="Convolutional Layer")
+    params = ParameterVector(param_prefix, length=param_length)
+    local_qubits = list(range(num_qubits))
+
     start_index = 0
-    n = len(qubits)
-    end_index = n * 2
-    for l in range(num_layer):
-        if n == 8:
-            step = n // 2
-            for i in range(0, n, step):
-                sub_params = params[start_index:end_index]
-                sub_qc = F1(sub_params, step)
-                qcnn.append(sub_qc.to_instruction(), qubits[i:i+step])
-        else:
-            end_index += n * 2
-            sub_params = params[start_index:end_index]
-            sub_qc = F1(sub_params, n)
-            qcnn.append(sub_qc.to_instruction(), qubits)
+    end_index = num_qubits * 2
 
+    for l in range(num_layer):
+        if num_qubits == 8:
+            step = num_qubits // 2
+            for i in range(0, num_qubits, step):
+                sub_params = params[start_index:end_index]
+                qc.compose(F1(sub_params, step), local_qubits[i:i + step], inplace=True)
+        else:
+            end_index += num_qubits * 2
+            sub_params = params[start_index:end_index]
+            qc.compose(F1(sub_params, num_qubits), local_qubits, inplace=True)
+        qc.barrier()
         start_index = end_index
         end_index += F2_params
 
-        for i in range(0, n, 2):
+        for i in range(0, num_qubits, 2):
             sub_params = params[start_index:end_index]
-            sub_qc = F2(sub_params)
-            qcnn.append(sub_qc.to_instruction(), [qubits[i % n], qubits[(i+1) % n]])
-        for i in range(1, n, 2):
+            qc.compose(F2(sub_params), [local_qubits[i], local_qubits[(i + 1) % num_qubits]], inplace=True)
+        qc.barrier()
+        for i in range(1, num_qubits, 2):
             sub_params = params[start_index:end_index]
-            sub_qc = F2(sub_params)
-            qcnn.append(sub_qc.to_instruction(), [qubits[i % n], qubits[(i+1) % n]])
-
+            qc.compose(F2(sub_params), [local_qubits[i], local_qubits[(i + 1) % num_qubits]], inplace=True)
         start_index = end_index
-        end_index += n * 2
+        end_index += num_qubits * 2
 
-def pooling_layer1(qcnn, params):
-    sub_qc = P(params)
-    qcnn.append(sub_qc.to_instruction(), [7, 6])
-    qcnn.append(sub_qc.to_instruction(), [1, 0])
+    inst = qc.to_instruction()
+    new_qc = QuantumCircuit(num_qubits)
+    new_qc.append(inst, new_qc.qubits)
+    return new_qc
 
-def pooling_layer2(qcnn, params):
-    sub_qc = P(params)
-    qcnn.append(sub_qc.to_instruction(), [3, 2])
-    qcnn.append(sub_qc.to_instruction(), [5, 4])
+def pooling_layer(param_prefix, param_length, target_qubits, num_qubits):
+    qc = QuantumCircuit(num_qubits)
+    params = ParameterVector(param_prefix, length=param_length)
+    for tq in target_qubits:
+        qc.compose(P(params), [qc.qubits[i] for i in tq], inplace=True)
+    inst = qc.to_instruction()
+    new_qc = QuantumCircuit(num_qubits)
+    new_qc.append(inst, new_qc.qubits)
+    return new_qc
 
-def pooling_layer3(qcnn, params, num_classes):
-    if num_classes == 4:
-        qcnn.append(P(params).to_instruction(), [2, 0])
-    qcnn.append(P(params).to_instruction(), [6, 4])
+def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=1):
+    qubits = list(range(n_qubit))
 
-def QCNN_architecture(qcnn, params, F2_params, num_classes, num_layer, n_qubit):
-    index = (F2_params + n_qubit * 2) * num_layer
-    param1CL = params[0:index]
-    param1PL = params[index:index + 2]
+    feature_map = encoding_features(qubits)
 
-    index1 = (F2_params + (n_qubit - 2) * 4) * num_layer
-    param2CL = params[index + 2:index + 2 + index1]
-    param2PL = params[index + 2 + index1:index + 2 + index1 + 2]
+    ansatz = QuantumCircuit(n_qubit, name="Ansatz")
 
-    param3CL = params[index + 2 + index1 + 2 : index + 2 + index1 + 2 + index]
+    ansatz.compose(
+        conv_layer(
+            param_prefix="c1",
+            param_length=((n_qubit * 2) + num_F2_params) * num_layer,
+            F2_params=num_F2_params,
+            num_layer=num_layer,
+            qubits=qubits
+        ),
+        qubits, 
+        inplace=True
+    )
+    ansatz.barrier()
 
-    conv_layer(qcnn, param1CL, F2_params, num_layer, list(range(n_qubit)))
-    pooling_layer1(qcnn, param1PL)
+    ansatz.compose(
+        pooling_layer(
+            param_prefix="p1",
+            param_length=num_P_params,
+            target_qubits=[[7, 6], [1, 0]],
+            num_qubits=n_qubit
+        ),
+        qubits,
+        inplace=True
+    )
+    ansatz.barrier()
 
-    qcnn.barrier()
+    ansatz.compose(
+        conv_layer(
+            param_prefix="c2",
+            param_length=(((n_qubit - 2) * 4) + num_F2_params) * num_layer,
+            F2_params=num_F2_params,
+            num_layer=num_layer,
+            qubits=[0, 2, 3, 4, 5, 6]
+        ),
+        [0, 2, 3, 4, 5, 6],
+        inplace=True
+    )
+    ansatz.barrier()
 
-    conv_layer(qcnn, param2CL, F2_params, num_layer, [0, 2, 3, 4, 5, 6])
-    pooling_layer2(qcnn, param2PL)
+    ansatz.compose(
+        pooling_layer(
+            param_prefix="p2",
+            param_length=num_P_params,
+            target_qubits=[[3, 2], [5, 4]],
+            num_qubits=n_qubit
+        ),
+        qubits,
+        inplace=True
+    )
+    ansatz.barrier()
 
-    qcnn.barrier()
+    ansatz.compose(
+        conv_layer(
+            param_prefix="c3",
+            param_length=((4 * 4) + num_F2_params) * num_layer,
+            F2_params=num_F2_params,
+            num_layer=num_layer,
+            qubits=[0, 2, 4, 6]
+        ),
+        [0, 2, 4, 6],
+        inplace=True
+    )
+    ansatz.barrier()
 
-    conv_layer(qcnn, param3CL, F2_params, num_layer, [0, 2, 4, 6])
-    if num_classes in [4, 6, 8]:
-        param3PL = params[index + 2 + index1 + 2 + index : index1 + 2 + index1 + 2 + index + 2]
-        pooling_layer3(qcnn, param3PL, num_classes)
+    ansatz.compose(
+        pooling_layer(
+            param_prefix="p3",
+            param_length=num_P_params,
+            target_qubits=[[2, 0], [6, 4]],
+            num_qubits=n_qubit
+        ),
+        qubits,
+        inplace=True
+    )
+    ansatz.barrier()
 
+    ansatz.compose(
+        conv_layer(
+            param_prefix="c4",
+            param_length=((2 * 4) + num_F2_params) * num_layer,
+            F2_params=num_F2_params,
+            num_layer=num_layer,
+            qubits=[0, 4]
+        ),
+        [0, 4],
+        inplace=True
+    )
+    ansatz.barrier()
 
-def QCNN(X, params, F2_params, cost_fn='cross_entropy', num_classes=10, num_layer=1):
-    n_qubit = 8
-    qcnn = QuantumCircuit(n_qubit, n_qubit)
+    ansatz.compose(
+        pooling_layer(
+            param_prefix="p4",
+            param_length=num_P_params,
+            target_qubits=[[4, 0]],
+            num_qubits=n_qubit
+        ),
+        qubits,
+        inplace=True
+    )
 
-    # Encoding input features
-    for i in range(n_qubit):
-        qcnn.h(i)
-        qcnn.ry(X[i], i)
-    qcnn.barrier()
+    circuit = QuantumCircuit(n_qubit)
+    circuit.compose(feature_map, list(range(n_qubit)), inplace=True)
+    circuit.compose(ansatz, list(range(n_qubit)), inplace=True)
 
-    # Build the QCNN architecture
-    QCNN_architecture(qcnn, params, F2_params, num_classes, num_layer, n_qubit)
+    observable = SparsePauliOp.from_list([("Z" + "I" * (n_qubit - 1), 1)])
+    estimator = Estimator()
 
-    if num_classes == 4:
-        measure_wires = [0, 4]
-    elif num_classes == 6:
-        measure_wires = [0, 2, 4]
-    elif num_classes == 8:
-        measure_wires = [0, 2, 4]
-    else:
-        measure_wires = [0, 2, 4, 6]
+    qnn = EstimatorQNN(
+        circuit=circuit.decompose(),
+        observables=observable,
+        input_params=feature_map.parameters,
+        weight_params=ansatz.parameters,
+        estimator=estimator,
+    )
 
-    for wire in measure_wires:
-        qcnn.measure(wire, wire)
-
-    return qcnn
-
-if __name__ == '__main__':
-  n_qubit = 8
-  X = np.random.random(n_qubit)
-  U_params = 15
-  num_layer = 1
-
-  total1 = (U_params + n_qubit * 2) * num_layer
-  total2 = (U_params + (n_qubit - 2) * 4) * num_layer
-  total_params = int(total1 + 2 + total2 + 2 + total1)
-
-  params = np.random.random(total_params)
-
-  qc = QCNN(X, params, U_params, num_classes=10, num_layer=num_layer)
+    return ansatz, qnn
