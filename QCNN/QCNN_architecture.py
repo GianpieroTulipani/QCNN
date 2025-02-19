@@ -64,7 +64,7 @@ def pooling_layer(param_prefix, param_length, target_qubits, num_qubits):
     new_qc.append(inst, new_qc.qubits)
     return new_qc
 
-def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=2):
+def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=1):
     qubits = list(range(n_qubit))
 
     feature_map = encoding_features(qubits)
