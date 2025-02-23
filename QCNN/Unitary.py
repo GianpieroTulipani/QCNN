@@ -32,7 +32,7 @@ def F2(params):
     qc.u(params[3], params[4], params[5], 1)
     qc.cx(0, 1)
     qc.ry(params[6], 0)
-    qc.rz(params[7], 1)
+    qc.ry(params[7], 1)
     qc.cx(1, 0)
     qc.ry(params[8], 0)
     qc.cx(0, 1)

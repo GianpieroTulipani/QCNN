@@ -1,10 +1,5 @@
-from Unitary import F1, F2, P
-
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
-from qiskit.quantum_info import SparsePauliOp
-from qiskit.primitives import StatevectorEstimator as Estimator
-from qiskit_machine_learning.neural_networks import EstimatorQNN
 
 def encoding_features(qubits):
     num_qubits = len(qubits)
@@ -64,9 +59,9 @@ def pooling_layer(param_prefix, param_length, target_qubits, num_qubits):
     new_qc.append(inst, new_qc.qubits)
     return new_qc
 
-def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=1):
-    qubits = list(range(n_qubit))
 
+def QCNN(n_qubit=8, num_F2_params=15, num_P_params=2, num_layer=1):
+    qubits = list(range(n_qubit))
     feature_map = encoding_features(qubits)
 
     ansatz = QuantumCircuit(n_qubit, name="Ansatz")
@@ -79,7 +74,7 @@ def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=1):
             num_layer=num_layer,
             qubits=qubits
         ),
-        qubits, 
+        qubits,
         inplace=True
     )
     ansatz.barrier()
@@ -132,57 +127,7 @@ def QCNN(n_qubit = 8, num_F2_params=15, num_P_params=2, num_layer=1):
         [0, 2, 4, 6],
         inplace=True
     )
+
     ansatz.barrier()
 
-    ansatz.compose(
-        pooling_layer(
-            param_prefix="p3",
-            param_length=num_P_params,
-            target_qubits=[[2, 0], [6, 4]],
-            num_qubits=n_qubit
-        ),
-        qubits,
-        inplace=True
-    )
-    ansatz.barrier()
-
-    ansatz.compose(
-        conv_layer(
-            param_prefix="c4",
-            param_length=((2 * 4) + num_F2_params) * num_layer,
-            F2_params=num_F2_params,
-            num_layer=num_layer,
-            qubits=[0, 4]
-        ),
-        [0, 4],
-        inplace=True
-    )
-    ansatz.barrier()
-
-    ansatz.compose(
-        pooling_layer(
-            param_prefix="p4",
-            param_length=num_P_params,
-            target_qubits=[[4, 0]],
-            num_qubits=n_qubit
-        ),
-        qubits,
-        inplace=True
-    )
-
-    circuit = QuantumCircuit(n_qubit)
-    circuit.compose(feature_map, list(range(n_qubit)), inplace=True)
-    circuit.compose(ansatz, list(range(n_qubit)), inplace=True)
-
-    observable = SparsePauliOp.from_list([("Z" + "I" * (n_qubit - 1), 1)])
-    estimator = Estimator()
-
-    qnn = EstimatorQNN(
-        circuit=circuit.decompose(),
-        observables=observable,
-        input_params=feature_map.parameters,
-        weight_params=ansatz.parameters,
-        estimator=estimator,
-    )
-
-    return ansatz, qnn
+    return feature_map, ansatz

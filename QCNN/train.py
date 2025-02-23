@@ -1,19 +1,17 @@
 from QCNN_architecture import QCNN
 from pathlib import Path
 from loguru import logger
-from dataset import load_data_and_process
+from dataset import data_load_and_process
 import numpy as np
-import os
-import json
+import pickle
 import typer
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
-from qiskit import QuantumCircuit
-from qiskit.quantum_info import SparsePauliOp
 from qiskit_machine_learning.optimizers import COBYLA
 from qiskit_machine_learning.utils import algorithm_globals
-from qiskit_machine_learning.algorithms.classifiers import NeuralNetworkClassifier
-from config import RAW_DATA_DIR, MODELS_DIR
+from qiskit.primitives import Sampler
+from qiskit_machine_learning.algorithms.classifiers import VQC
+
 
 app = typer.Typer()
 algorithm_globals.random_seed = 12345
@@ -29,38 +27,51 @@ def callback_graph(weights, obj_func_eval):
     plt.plot(range(len(objective_func_vals)), objective_func_vals)
     plt.show()
 
+def interpret(bitstring):
+    if isinstance(bitstring, str):
+        return int(bitstring, 2) % 4
+    elif isinstance(bitstring, (int, float)):
+        return int(bitstring) % 4
+    else:
+        raise TypeError("Invalid input for interpret function")
+
 @app.command()
-def train(
-    data_dir: Path = RAW_DATA_DIR / 'Brain_Data_Organised',
-    weights_dir: Path = MODELS_DIR / "qcnn_initial_point.json",
-):
-	ansatz, qnn = QCNN()
-	if os.path.exists(weights_dir):
-		with open(weights_dir, "r") as f:
-			initial_point = json.load(f)
-		logger.info("Loaded initial weights from JSON.")
-	else:
-		num_weights = len(ansatz.parameters)
-		initial_point = np.random.rand(num_weights).tolist()
-		with open(weights_dir, "w") as f:
-			json.dump(initial_point, f)
-		logger.info("Created new initial weights and saved to JSON.")
+def train():
+    feature_map, ansatz = QCNN()
 
-	classifier = NeuralNetworkClassifier(
-		qnn,
-		optimizer=COBYLA(maxiter=200),
-		callback=callback_graph,
-		initial_point=initial_point,
-	)
+    sampler = Sampler(options={
+        'seed': 0,
+        'shots': 4096
+    })
 
-	X_train, X_test, y_train, y_test = load_data_and_process(data_dir)
+    output_shape = 4
 
-	logger.info("Shape of training data:", X_train.shape)
+    vqc = VQC(
+      sampler=sampler,
+      feature_map=feature_map,
+      ansatz=ansatz,
+      optimizer=COBYLA(maxiter=1000),
+      callback=callback_graph,
+      interpret=interpret,
+      loss='cross_entropy',
+      output_shape=output_shape
+    )
 
-	X_train = np.asarray(X_train)
-	y_train = np.asarray(y_train)
+    X_train, _, y_train, _ = data_load_and_process(num_classes=4, all_samples=False, seed=None)
 
-	classifier.fit(X_train, y_train)
-	logger.info(f"Accuracy on training data: {np.round(100 * classifier.score(X_train, y_train), 2)}%")
+    logger.info("Shape of training data: {}", X_train.shape)
+
+    X_train = np.asarray(X_train)
+    y_train = np.asarray(y_train)
+
+    vqc.fit(X_train, y_train)
+    accuracy = np.round(100 * vqc.score(X_train, y_train), 2)
+    logger.info(f"Accuracy on training data: {accuracy}%")
+
+    model_filename = "/content/drive/MyDrive/vqc_model.pkl"
+    with open(model_filename, "wb") as f:
+        pickle.dump(vqc, f)
+    logger.info(f"Model saved to {model_filename}")
+      
 if __name__ == "__main__":
     app()
